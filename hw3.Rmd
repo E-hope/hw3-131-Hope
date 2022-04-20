@@ -1,0 +1,249 @@
+---
+title: "hw3-hope-131"
+author: "Evan Hope"
+date: "4/19/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Downloading appropriate packages...
+```{r}
+install.packages("ggthemes")
+install.packages("corrplot")
+install.packages("ISLR2")
+
+library(ggplot2)
+library(tidyverse)
+library(tidymodels)
+library(corrplot)
+library(ggthemes)
+library(ISLR2) 
+library(discrim)
+library(poissonreg)
+library(corrr)
+library(klaR) 
+tidymodels_prefer()
+```
+
+
+Reading in the data and setting the seed...
+```{r}
+set.seed(8888)
+
+titanic_data <- read.csv("C:/Users/Ordai/OneDrive/Desktop/School/Stats/PSTAT 131/hw3-131-Hope/titanic.csv")
+```
+
+
+We must now change "survived" and "plclass" to factors while also reordering the levels of the survived.
+```{r}
+titanic_data$survived <- factor(titanic_data$survived, levels = c("Yes", "No"))
+
+titanic_data$pclass <- factor(titanic_data$pclass)
+
+is.factor(titanic_data$survived)
+is.factor(titanic_data$pclass)
+```
+
+
+Question 1.) splitting the data
+
+```{r}
+titanic_data_split <- initial_split(titanic_data, prop = 0.70, strata = survived)
+
+titanic_train <- training(titanic_data_split)
+titanic_test <- testing(titanic_data_split)
+```
+
+It is good to use stratified sampling here because we are dealing with qualitative data that can produce different average values. 
+
+Question 2.) Distribution of 'survived'
+```{r}
+titanic_train$survived
+
+```
+After observing the training set, we can easily see that more people didnt survive than did survive. Given that there are only two possible outcomes, the survived variable has a binomial distributed with some probability 'p' that the passenger survives.
+
+
+Question 3.) Correlation Matrix
+
+Plotting our correlation matrix for the cont. variables only...
+```{r}
+corrlate_titanic <- titanic_train %>%
+  select(-survived, -pclass, -name, -sex, -ticket, -embarked, -cabin) %>%
+  correlate()
+rplot(corrlate_titanic)
+```
+By the looks of it there are TWO distinct correlations. 1.) # of siblings/spouses and age in the red direction. 
+
+This makes sense as the number of siblings and spouses increases, the ages should typically be younger as this indicates a child of a family.
+
+Otherwise the age may represent the (typically older) age of the husband if the number represents the spouse.
+
+2.) # of siblings/spouse and # of parents/children aboard in the blue direction.
+
+For similar reasons above, this correlation should be expected.
+
+
+Question 4.) Recipe
+
+```{r}
+titanic_survival <- recipe(survived ~ pclass + sex + age + sib_sp + parch + fare, data = titanic_train) %>%
+  step_impute_linear(age) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric()) %>%
+  step_interact(terms = ~ sex_male:fare) %>%
+  step_interact(terms = ~ age:fare)
+  
+```
+
+
+Question 5.) Logistic Regression
+
+Setting up the engine
+```{r}
+log_reg <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+```
+
+Setting up the workflow...
+```{r}
+log_wkflow <- workflow() %>% 
+  add_model(log_reg) %>% 
+  add_recipe(titanic_survival)
+
+
+#Applying the workflow...
+
+titanic_log_fit <- fit(log_wkflow, titanic_train)
+```
+
+Lets view the results.
+```{r}
+titanic_log_fit %>%
+  tidy()
+```
+
+Question 6. 7. and 8.) Repeat 5....
+
+Linear Discriminant Analysis
+```{r}
+# Engine
+linear_disc_analysis <- discrim_linear() %>% 
+  set_engine("MASS") %>% 
+  set_mode("classification")
+
+#Setting up the workflow...
+
+linear_disc_wkflow <- workflow() %>% 
+  add_model(linear_disc_analysis) %>% 
+  add_recipe(titanic_survival)
+
+
+#Applying the workflow...
+
+titanic_linear_disc_fit <- fit(linear_disc_wkflow, titanic_train)
+```
+
+
+Quadratic Discriminant Analysis
+```{r}
+# Engine
+quad_disc_analysis <- discrim_quad() %>% 
+  set_engine("MASS") %>% 
+  set_mode("classification")
+
+#Setting up the workflow...
+
+quad_disc_wkflow <- workflow() %>% 
+  add_model(quad_disc_analysis) %>% 
+  add_recipe(titanic_survival)
+
+
+#Applying the workflow...
+
+titanic_quad_disc_fit <- fit(quad_disc_wkflow, titanic_train)
+```
+
+Naive Bayes Model
+```{r}
+# Engine
+naive_bayes_model <- naive_Bayes() %>% 
+  set_engine("klaR") %>% 
+  set_mode("classification") %>%
+  set_args(usekernel = FALSE)
+
+#Setting up the workflow...
+
+naive_bayes_wkflow <- workflow() %>% 
+  add_model(naive_bayes_model) %>% 
+  add_recipe(titanic_survival)
+
+
+#Applying the workflow...
+
+titanic_naive_bayes_fit <- fit(naive_bayes_wkflow, titanic_train)
+```
+
+
+Question 9.)
+
+Calculating our accuracies for all 4 models
+```{r}
+log_reg_acc <- augment(titanic_log_fit, new_data = titanic_train) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+
+disc_linear_acc <- augment(titanic_linear_disc_fit, new_data = titanic_train) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+
+quad_disc_acc <- augment(titanic_quad_disc_fit, new_data = titanic_train) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+
+naive_bayes_acc <- augment(titanic_naive_bayes_fit, new_data = titanic_train) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+```
+
+And now comparing...
+```{r}
+accuracies <- c(log_reg_acc$.estimate, disc_linear_acc$.estimate, 
+                quad_disc_acc$.estimate, naive_bayes_acc$.estimate)
+models <- c("Logistic Regression", "LDA", "QDA", "Naive Bayes")
+results <- tibble(accuracies = accuracies, models = models)
+results %>% 
+  arrange(-accuracies)
+```
+
+Based off this display of accuracy scores, logistic regression appears to have the highest accuracy!
+
+Question 10.) Using the logistic regression model...
+
+```{r}
+predict(titanic_log_fit, new_data = titanic_test, type = "prob")
+```
+
+Putting it into a confusion matrix...
+
+```{r}
+augment(titanic_log_fit, new_data = titanic_test) %>%
+  conf_mat(truth = survived, estimate = .pred_class)
+```
+
+Now we will look at the ROC curve and find the area under the curve.
+
+First: ROC plot
+
+```{r}
+augment(titanic_log_fit, new_data = titanic_test) %>%
+  roc_curve(survived, .pred_Yes) %>%
+  autoplot()
+```
+
+Now for the AUC:
+```{r}
+augment(titanic_log_fit, new_data = titanic_test) %>%
+  roc_auc(survived, .pred_Yes)
+```
+As we can see, our testing accuracy was higher than our training accuracy! The reason I think this happens is because there are missing values in the data that could be distorting it a bit.
